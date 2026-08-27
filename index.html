@@ -227,7 +227,7 @@ ${JSON.stringify(result, null, 2)}
         const otherRows = filterRows(state.other, $('otherColumn').value, $('otherValue').value);
         const result = {
           database: { file: state.db.file.name, sheet: $('dbSheet').value, headerRow: 13, filter: { column: $('dbColumn').value, value: $('dbValue').value }, total: dbRows.length, rows: dbRows },
-          otherFile: { file: state.other.file.name, sheet: $('otherSheet').value, headerRow: 1, filter: { column: $('otherColumn').value, value: $('otherValue').value }, total: otherRows.length, rows: otherRows }
+          otherFile: { file: state.other.file.name, sheet: $('otherSheet').value, headerRow: 0, filter: { column: $('otherColumn').value, value: $('otherValue').value }, total: otherRows.length, rows: otherRows }
         };
         const prompt = buildPrompt(result);
         const blob = new Blob([prompt], { type: 'text/plain;charset=utf-8' });
