@@ -89,7 +89,7 @@
       </article>
 
       <article class="panel full">
-        <button id="runButton" disabled>Filtrar archivos y generar JSON</button>
+        <button id="runButton" disabled>Generar archivo para la IA</button>
         <p class="status" id="globalStatus"></p>
         <div class="results" id="results" hidden>
           <div class="result-box">Registros en base de datos<strong id="dbTotal">0</strong></div>
@@ -171,6 +171,50 @@
       return source.rows.filter(row => normalize(row[column]) === normalize(value));
     }
 
+    function buildPrompt(result) {
+      return `Tengo un archivo con dos extractos de bases de datos que representan información relacionada, pero utilizan diferentes nombres, terminología y niveles de detalle para describir las mismas tareas o procedimientos.
+
+Quiero comparar ambas bases de datos de forma SEMÁNTICA, no mediante coincidencia exacta de texto.
+
+La comparación debe responder específicamente a esta pregunta:
+
+¿CUÁLES DE LAS OPERACIONES/LÍNEAS DE LA SEGUNDA BASE DE DATOS NO ESTÁN CUBIERTAS POR NINGÚN DOCUMENTO, TAREA O PROCEDIMIENTO DE LA PRIMERA BASE?
+
+Importante:
+
+* La primera base contiene documentos/procedimientos generales y específicos.
+* La segunda base contiene operaciones o tareas.
+* No compares únicamente palabras idénticas.
+* Tené en cuenta sinónimos, diferencias de redacción, nombres alternativos de equipos y diferencias de nivel de detalle.
+* Una operación puede estar cubierta por un procedimiento aunque no tengan exactamente el mismo nombre.
+* Considerá también que un documento general puede cubrir varias operaciones específicas.
+
+Para cada operación de la segunda base, clasificála en una de estas categorías:
+
+1. INCLUIDA: existe un documento o procedimiento que claramente cubre esa operación.
+2. PROBABLEMENTE INCLUIDA: existe una relación semántica fuerte, pero no es completamente segura.
+3. NO INCLUIDA: no encontraste ningún documento o procedimiento de la primera base que cubra esa operación.
+4. DUDOSA: no hay suficiente información para determinarlo con seguridad.
+
+El resultado principal debe ser una lista de todas las operaciones clasificadas como NO INCLUIDA o DUDOSA.
+
+Para cada una, mostrar:
+
+| Operación | Texto de la operación | Clasificación | Motivo | Documento relacionado si existe |
+|-----------|----------------------|---------------|--------|--------------------------------|
+
+Además, para las operaciones INCLUIDA o PROBABLEMENTE INCLUIDA, indicá cuál es el documento o procedimiento de la primera base que considerás equivalente.
+
+No inventes equivalencias. Si la relación no es suficientemente clara, clasificála como DUDOSA.
+Analizá TODOS los registros incluidos en los dos extractos, no solamente una muestra.
+
+Los datos completos a analizar están en el siguiente parámetro JSON:
+
+<datos>
+${JSON.stringify(result, null, 2)}
+</datos>`;
+    }
+
     function run() {
       try {
         const dbRows = filterRows(state.db, $('dbColumn').value, $('dbValue').value);
@@ -179,16 +223,17 @@
           database: { file: state.db.file.name, sheet: $('dbSheet').value, filter: { column: $('dbColumn').value, value: $('dbValue').value }, total: dbRows.length, rows: dbRows },
           otherFile: { file: state.other.file.name, sheet: $('otherSheet').value, filter: { column: $('otherColumn').value, value: $('otherValue').value }, total: otherRows.length, rows: otherRows }
         };
-        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+        const prompt = buildPrompt(result);
+        const blob = new Blob([prompt], { type: 'text/plain;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = 'resultado.json';
+        link.download = 'analisis_semantico.txt';
         link.click();
         URL.revokeObjectURL(link.href);
         $('dbTotal').textContent = dbRows.length;
         $('otherTotal').textContent = otherRows.length;
         $('results').hidden = false;
-        $('globalStatus').textContent = 'Listo. Se descargó resultado.json.';
+        $('globalStatus').textContent = 'Listo. Se descargó analisis_semantico.txt con el prompt y los datos JSON.';
         $('globalStatus').className = 'status ok';
       } catch (error) {
         $('globalStatus').textContent = error.message;
