@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Filtro de archivos Excel</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --ink: #18232b;
+      --muted: #66747c;
+      --line: #d8e0dc;
+      --paper: #f6f7f2;
+      --panel: #ffffff;
+      --accent: #d85c36;
+      --accent-dark: #a73f22;
+      --green: #28735d;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: radial-gradient(circle at 10% 0%, #fff7e8 0, transparent 33%), var(--paper);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 64px; }
+    header { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 34px; }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 4.2rem); line-height: .95; letter-spacing: -.04em; max-width: 600px; }
+    .intro { max-width: 290px; color: var(--muted); line-height: 1.45; margin: 0; }
+    .workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .panel { background: rgba(255,255,255,.84); border: 1px solid var(--line); padding: 22px; box-shadow: 0 10px 30px rgba(24,35,43,.05); }
+    .panel.full { grid-column: 1 / -1; }
+    .panel h2 { margin: 0 0 18px; font-size: 1.25rem; }
+    .panel h2 span { color: var(--accent); font-size: .8rem; margin-right: 8px; }
+    label { display: block; color: var(--muted); font: 600 .78rem/1.2 Arial, sans-serif; letter-spacing: .05em; text-transform: uppercase; margin: 16px 0 7px; }
+    input, select, button { width: 100%; min-height: 44px; border: 1px solid var(--line); padding: 10px 12px; font: 16px Arial, sans-serif; background: #fff; color: var(--ink); }
+    input[type=file] { padding: 8px; }
+    input:focus, select:focus { outline: 2px solid #f0b59f; outline-offset: 1px; }
+    button { cursor: pointer; border-color: var(--accent); background: var(--accent); color: white; font-weight: 700; }
+    button:hover { background: var(--accent-dark); }
+    button:disabled { cursor: not-allowed; opacity: .45; }
+    .status { min-height: 24px; margin: 18px 0 0; color: var(--muted); font: 14px Arial, sans-serif; }
+    .status.error { color: #ad2e2e; }
+    .status.ok { color: var(--green); }
+    .results { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+    .result-box { border-left: 4px solid var(--green); padding: 12px 14px; background: #f0f7f1; font: 14px Arial, sans-serif; }
+    .result-box strong { display: block; font-size: 1.4rem; margin-top: 3px; }
+    @media (max-width: 720px) {
+      main { padding-top: 28px; }
+      header, .workspace, .results { display: block; }
+      .intro { margin-top: 18px; }
+      .panel { margin-bottom: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Filtrar Excel<br>y extraer JSON</h1>
+      <p class="intro">Carga los dos archivos, elige dónde buscar y descarga únicamente los registros encontrados.</p>
+    </header>
+
+    <section class="workspace">
+      <article class="panel">
+        <h2><span>01</span>Base de datos</h2>
+        <label for="dbFile">Archivo Excel</label>
+        <input id="dbFile" type="file" accept=".xlsx,.xls,.csv">
+        <label for="dbSheet">Hoja</label>
+        <select id="dbSheet" disabled><option>Primero carga un archivo</option></select>
+        <label for="dbColumn">Columna</label>
+        <select id="dbColumn" disabled><option>Primero selecciona una hoja</option></select>
+        <label for="dbValue">Valor a buscar</label>
+        <input id="dbValue" type="text" placeholder="Ej: Ensacadora n°3">
+        <p class="status" id="dbStatus">La tabla se leerá desde la fila 12.</p>
+      </article>
+
+      <article class="panel">
+        <h2><span>02</span>Segundo archivo</h2>
+        <label for="otherFile">Archivo Excel</label>
+        <input id="otherFile" type="file" accept=".xlsx,.xls,.csv">
+        <label for="otherSheet">Hoja</label>
+        <select id="otherSheet" disabled><option>Primero carga un archivo</option></select>
+        <label for="otherColumn">Columna</label>
+        <select id="otherColumn" disabled><option>Primero selecciona una hoja</option></select>
+        <label for="otherValue">Valor a buscar</label>
+        <input id="otherValue" type="text" placeholder="Ej: ODE_ENS3">
+        <p class="status" id="otherStatus">La tabla se leerá desde la primera fila.</p>
+      </article>
+
+      <article class="panel full">
+        <button id="runButton" disabled>Filtrar archivos y generar JSON</button>
+        <p class="status" id="globalStatus"></p>
+        <div class="results" id="results" hidden>
+          <div class="result-box">Registros en base de datos<strong id="dbTotal">0</strong></div>
+          <div class="result-box">Registros en segundo archivo<strong id="otherTotal">0</strong></div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const state = { db: null, other: null };
+    const $ = (id) => document.getElementById(id);
+
+    function normalize(value) {
+      return String(value ?? '').trim().toLowerCase();
+    }
+
+    function readWorkbook(file, type) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const workbook = XLSX.read(event.target.result, { type: 'array' });
+            resolve(workbook);
+          } catch (error) { reject(error); }
+        };
+        reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    function rowsFromSheet(workbook, sheetName, startRow) {
+      return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+        defval: '',
+        range: startRow
+      });
+    }
+
+    function fillSelect(select, values) {
+      select.innerHTML = values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+      select.disabled = values.length === 0;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+    }
+
+    function updateColumns(type) {
+      const sheet = $(`${type}Sheet`).value;
+      const source = state[type];
+      const rows = rowsFromSheet(source.workbook, sheet, source.startRow);
+      source.rows = rows;
+      fillSelect($(`${type}Column`), rows.length ? Object.keys(rows[0]) : []);
+      $(`${type}Status`).textContent = `${rows.length} registros disponibles.`;
+    }
+
+    async function handleFile(type, event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const workbook = await readWorkbook(file, type);
+        state[type] = { file, workbook, startRow: type === 'db' ? 12 : 0, rows: [] };
+        fillSelect($(`${type}Sheet`), workbook.SheetNames);
+        updateColumns(type);
+        $(`${type}Sheet`).onchange = () => updateColumns(type);
+        updateRunButton();
+      } catch (error) {
+        $(`${type}Status`).textContent = error.message;
+        $(`${type}Status`).className = 'status error';
+      }
+    }
+
+    function updateRunButton() {
+      $('runButton').disabled = !(state.db && state.other);
+    }
+
+    function filterRows(source, column, value) {
+      if (!source.rows.length) throw new Error(`No hay registros en la hoja seleccionada de ${source.file.name}.`);
+      return source.rows.filter(row => normalize(row[column]) === normalize(value));
+    }
+
+    function run() {
+      try {
+        const dbRows = filterRows(state.db, $('dbColumn').value, $('dbValue').value);
+        const otherRows = filterRows(state.other, $('otherColumn').value, $('otherValue').value);
+        const result = {
+          database: { file: state.db.file.name, sheet: $('dbSheet').value, filter: { column: $('dbColumn').value, value: $('dbValue').value }, total: dbRows.length, rows: dbRows },
+          otherFile: { file: state.other.file.name, sheet: $('otherSheet').value, filter: { column: $('otherColumn').value, value: $('otherValue').value }, total: otherRows.length, rows: otherRows }
+        };
+        const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'resultado.json';
+        link.click();
+        URL.revokeObjectURL(link.href);
+        $('dbTotal').textContent = dbRows.length;
+        $('otherTotal').textContent = otherRows.length;
+        $('results').hidden = false;
+        $('globalStatus').textContent = 'Listo. Se descargó resultado.json.';
+        $('globalStatus').className = 'status ok';
+      } catch (error) {
+        $('globalStatus').textContent = error.message;
+        $('globalStatus').className = 'status error';
+      }
+    }
+
+    $('dbFile').addEventListener('change', event => handleFile('db', event));
+    $('otherFile').addEventListener('change', event => handleFile('other', event));
+    $('runButton').addEventListener('click', run);
+  </script>
+</body>
+</html>
